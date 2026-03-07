@@ -38,7 +38,7 @@ async def get_scores(
     select(ItemRecord).where(
       (ItemRecord.type == "lab") & (ItemRecord.title.contains(lab_title_pattern))
     )
-  )).first()
+  )).scalars().first()
   if not lab_row:
     # return empty buckets
     return [
@@ -50,7 +50,7 @@ async def get_scores(
 
   tasks = (await session.exec(
     select(ItemRecord).where((ItemRecord.type == "task") & (ItemRecord.parent_id == lab_row.id))
-  )).all()
+  )).scalars().all()
   task_ids = [t.id for t in tasks]
 
   if not task_ids:
@@ -98,26 +98,30 @@ async def get_pass_rates(
     select(ItemRecord).where(
       (ItemRecord.type == "lab") & (ItemRecord.title.contains(lab_title_pattern))
     )
-  )).first()
+  )).scalars().first()
   if not lab_row:
     return []
 
   tasks = (await session.exec(
     select(ItemRecord).where((ItemRecord.type == "task") & (ItemRecord.parent_id == lab_row.id)).order_by(ItemRecord.title)
+  )).scalars().all()
+
+  # Use a single query joining ItemRecord and InteractionLog to avoid model/row shape issues
+  rows = (await session.exec(
+    select(
+      ItemRecord.title.label("task"),
+      func.avg(InteractionLog.score).label("avg_score"),
+      func.count().label("attempts"),
+    ).join(InteractionLog, InteractionLog.item_id == ItemRecord.id).where(
+      (ItemRecord.parent_id == lab_row.id) & (InteractionLog.score.isnot(None))
+    ).group_by(ItemRecord.id).order_by(ItemRecord.title)
   )).all()
 
-  out: list[dict] = []
-  for task in tasks:
-    row = (await session.exec(
-      select(func.avg(InteractionLog.score).label("avg_score"), func.count().label("attempts")).where(
-        (InteractionLog.item_id == task.id) & (InteractionLog.score.isnot(None))
-      )
-    )).first()
-
-    avg_score = round(row.avg_score, 1) if row and row.avg_score is not None else 0.0
-    attempts = int(row.attempts) if row and row.attempts is not None else 0
-
-    out.append({"task": task.title, "avg_score": avg_score, "attempts": attempts})
+  out = []
+  for r in rows:
+    avg_score = round(r.avg_score, 1) if r.avg_score is not None else 0.0
+    attempts = int(r.attempts) if r.attempts is not None else 0
+    out.append({"task": r.task, "avg_score": avg_score, "attempts": attempts})
 
   return out
 
@@ -136,18 +140,19 @@ async def get_timeline(
     select(ItemRecord).where(
       (ItemRecord.type == "lab") & (ItemRecord.title.contains(lab_title_pattern))
     )
-  )).first()
+  )).scalars().first()
   if not lab_row:
     return []
 
   tasks = (await session.exec(
     select(ItemRecord).where((ItemRecord.type == "task") & (ItemRecord.parent_id == lab_row.id))
-  )).all()
+  )).scalars().all()
   task_ids = [t.id for t in tasks]
   if not task_ids:
     return []
 
-  date_expr = cast(InteractionLog.created_at, Date)
+  # Use func.date to extract the date part; works reliably across SQLite
+  date_expr = func.date(InteractionLog.created_at)
 
   rows = (await session.exec(
     select(date_expr.label("date"), func.count().label("submissions")).where(
@@ -172,13 +177,13 @@ async def get_groups(
     select(ItemRecord).where(
       (ItemRecord.type == "lab") & (ItemRecord.title.contains(lab_title_pattern))
     )
-  )).first()
+  )).scalars().first()
   if not lab_row:
     return []
 
   tasks = (await session.exec(
     select(ItemRecord).where((ItemRecord.type == "task") & (ItemRecord.parent_id == lab_row.id))
-  )).all()
+  )).scalars().all()
   task_ids = [t.id for t in tasks]
   if not task_ids:
     return []
