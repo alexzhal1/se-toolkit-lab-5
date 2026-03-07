@@ -114,7 +114,7 @@ async def get_pass_rates(
       func.count().label("attempts"),
     ).join(InteractionLog, InteractionLog.item_id == ItemRecord.id).where(
       (ItemRecord.parent_id == lab_row.id) & (InteractionLog.score.isnot(None))
-    ).group_by(ItemRecord.id).order_by(ItemRecord.title)
+    ).group_by(ItemRecord.title).order_by(ItemRecord.title)
   )).all()
 
   out = []
