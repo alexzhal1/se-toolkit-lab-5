@@ -10,7 +10,7 @@ Both require HTTP Basic Auth (email + password from settings).
 from datetime import datetime
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.interaction import InteractionLog
@@ -307,10 +307,10 @@ async def sync(session: AsyncSession) -> dict:
     await load_items(items_catalog, session)
 
     # Step 2: Determine the last synced timestamp
-    last_interaction = await session.exec(
+    last_interaction_result = await session.exec(
         select(InteractionLog).order_by(InteractionLog.created_at.desc()).limit(1)
     )
-    last_log = last_interaction.first()
+    last_log = last_interaction_result.first()
     since = last_log.created_at if last_log else None
 
     # Step 3: Fetch and load logs
@@ -318,7 +318,9 @@ async def sync(session: AsyncSession) -> dict:
     new_records = await load_logs(logs, items_catalog, session)
 
     # Get total count
-    total_result = await session.exec(select(InteractionLog))
-    total_records = len(total_result.all())
+    total_count_result = await session.exec(
+        select(func.count(InteractionLog.id))
+    )
+    total_records = total_count_result.first() or 0
 
     return {"new_records": new_records, "total_records": total_records}
